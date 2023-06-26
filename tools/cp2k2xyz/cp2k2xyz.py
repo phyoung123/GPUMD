@@ -56,6 +56,11 @@ def CP2K2XYZ(folder, fnames=None, output_file=None):
          open(cell_file, 'r') as cf, open(output_file, 'w') as of:
         cf.readline()  # Skip the header line in the cell_file
 
+            # Read and process the cell information
+            cell_line = cf.readline().strip().split()
+            # Only read the Ax, Ay, Az, Bx, By, Bz, Cx, Cy, Cz columns
+            lattice = " ".join(cell_line[:])
+
         while True:
             pos_header = pf.readline()
             frc_header = ff.readline()
@@ -71,9 +76,9 @@ def CP2K2XYZ(folder, fnames=None, output_file=None):
             energy = float(frc_info_line.strip().split("E =")[-1]) / 27.211386245988
 
             # Read and process the cell information
-            cell_line = cf.readline().strip().split()
+            #cell_line = cf.readline().strip().split()
             # Only read the Ax, Ay, Az, Bx, By, Bz, Cx, Cy, Cz columns
-            lattice = " ".join(cell_line[2:11])
+            #lattice = " ".join(cell_line[2:11])
 
             of.write(f"energy={energy:.10f} config_type=cp2k2xyz pbc=\"T T T\" ")
             of.write(f"Lattice=\"{lattice}\" Properties=species:S:1:pos:R:3:force:R:3\n")
