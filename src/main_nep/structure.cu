@@ -48,10 +48,10 @@ static void change_box(const Parameters& para, Structure& structure)
   float b[3] = {structure.box_original[1], structure.box_original[4], structure.box_original[7]};
   float c[3] = {structure.box_original[2], structure.box_original[5], structure.box_original[8]};
   float det = get_det(structure.box_original);
-  float volume = abs(det);
-  structure.num_cell[0] = int(ceil(2.0f * para.rc_radial / (volume / get_area(b, c))));
-  structure.num_cell[1] = int(ceil(2.0f * para.rc_radial / (volume / get_area(c, a))));
-  structure.num_cell[2] = int(ceil(2.0f * para.rc_radial / (volume / get_area(a, b))));
+  structure.volume = abs(det);
+  structure.num_cell[0] = int(ceil(2.0f * para.rc_radial / (structure.volume / get_area(b, c))));
+  structure.num_cell[1] = int(ceil(2.0f * para.rc_radial / (structure.volume / get_area(c, a))));
+  structure.num_cell[2] = int(ceil(2.0f * para.rc_radial / (structure.volume / get_area(a, b))));
 
   structure.box[0] = structure.box_original[0] * structure.num_cell[0];
   structure.box[3] = structure.box_original[3] * structure.num_cell[0];
@@ -148,6 +148,22 @@ static void read_one_structure(const Parameters& para, std::ifstream& input, Str
   }
   if (para.train_mode == 0 && !has_energy_in_exyz) {
     PRINT_INPUT_ERROR("'energy' is missing in the second line of a frame.");
+  }
+
+  structure.has_temperature = false;
+  for (const auto& token : tokens) {
+    const std::string temperature_string = "temperature=";
+    if (token.substr(0, temperature_string.length()) == temperature_string) {
+      structure.has_temperature = true;
+      structure.temperature = get_float_from_token(
+        token.substr(temperature_string.length(), token.length()), __FILE__, __LINE__);
+    }
+  }
+  if (para.train_mode == 3 && !structure.has_temperature) {
+    PRINT_INPUT_ERROR("'temperature' is missing in the second line of a frame.");
+  }
+  if (!structure.has_temperature) {
+    structure.temperature = 0;
   }
 
   structure.weight = 1.0f;
@@ -433,6 +449,9 @@ static void reorder(std::vector<Structure>& structures)
     structures_copy[nc].weight = structures[nc].weight;
     structures_copy[nc].has_virial = structures[nc].has_virial;
     structures_copy[nc].energy = structures[nc].energy;
+    structures_copy[nc].has_temperature = structures[nc].has_temperature;
+    structures_copy[nc].temperature = structures[nc].temperature;
+    structures_copy[nc].volume = structures[nc].volume;
     for (int k = 0; k < 6; ++k) {
       structures_copy[nc].virial[k] = structures[nc].virial[k];
     }
@@ -468,6 +487,9 @@ static void reorder(std::vector<Structure>& structures)
     structures[nc].weight = structures_copy[configuration_id[nc]].weight;
     structures[nc].has_virial = structures_copy[configuration_id[nc]].has_virial;
     structures[nc].energy = structures_copy[configuration_id[nc]].energy;
+    structures[nc].has_temperature = structures_copy[configuration_id[nc]].has_temperature;
+    structures[nc].temperature = structures_copy[configuration_id[nc]].temperature;
+    structures[nc].volume = structures_copy[configuration_id[nc]].volume;
     for (int k = 0; k < 6; ++k) {
       structures[nc].virial[k] = structures_copy[configuration_id[nc]].virial[k];
     }

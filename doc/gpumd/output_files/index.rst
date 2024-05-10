@@ -45,11 +45,19 @@ Output files
      - :ref:`active <kw_active>`
      - Simulation time and uncertainty during active learning.
      - Append
+   * - :ref:`dipole.out <dipole_out>`
+     - :ref:`dump_dipole <kw_dump_dipole>`
+     - Predicted dipole.
+     - Append
+   * - :ref:`polarizability.out <polarizability_out>`
+     - :ref:`dump_polarizability <kw_dump_polarizability>`
+     - Predicted polarizability.
+     - Append
    * - :ref:`velocity.out <velocity_out>`
      - :ref:`dump_velocity <kw_dump_velocity>`
      - Contains the atomic velocities
      - Append
-   * - :ref:`force.out <force_out>`
+   * - :ref:`force.out <force_out_gpumd>`
      - :ref:`dump_force <kw_dump_force>`
      - Contains the atomic forces
      - Append
@@ -107,7 +115,27 @@ Output files
      - Append
    * - :ref:`onsager.out <onsager_out>`
      - :ref:`compute_hnemdec <kw_compute_hnemdec>`
-     - onsager coefficients
+     - Onsager coefficients
+     - Append
+   * - :ref:`rdf.out <rdf_out>`
+     - :ref:`compute_rdf <kw_compute_rdf>`
+     - Radial distribution function (:term:`RDF`)
+     - Append
+   * - :ref:`mcmd.out <mcmd_out>`
+     - :ref:`mc <kw_mc>`
+     - Acceptance ratio and species concentrations
+     - Append
+   * - :ref:`lsqt_dos.out <lsqt_dos_out>`
+     - :ref:`compute_lsqt <kw_compute_lsqt>`
+     - Electronic density of states
+     - Append
+   * - :ref:`lsqt_velocity.out <lsqt_velocity_out>`
+     - :ref:`compute_lsqt <kw_compute_lsqt>`
+     - Electron group velocity
+     - Append
+   * - :ref:`lsqt_sigma.out <lsqt_sigma_out>`
+     - :ref:`compute_lsqt <kw_compute_lsqt>`
+     - Electrical conductivity
      - Append
 
 .. toctree::
@@ -130,6 +158,8 @@ Output files
    dump_xyz
    observer_xyz
    observer_out
+   dipole_out
+   polarizability_out
    active_xyz
    active_out
    sdc_out
@@ -139,3 +169,8 @@ Output files
    velocity_out
    viscosity_out
    onsager_out
+   rdf_out
+   mcmd_out
+   lsqt_dos_out
+   lsqt_velocity_out
+   lsqt_sigma_out

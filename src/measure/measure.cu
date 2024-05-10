@@ -21,6 +21,7 @@ The driver class dealing with measurement.
 #include "model/atom.cuh"
 #include "utilities/error.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 #define NUM_OF_HEAT_COMPONENTS 5
 
 void Measure::initialize(
@@ -29,14 +30,16 @@ void Measure::initialize(
   Integrate& integrate,
   std::vector<Group>& group,
   Atom& atom,
+  Box& box,
   Force& force)
 {
   const int number_of_atoms = atom.mass.size();
   const int number_of_potentials = force.potentials.size();
+  lsqt.preprocess(atom, number_of_steps, time_step);
   dos.preprocess(time_step, group, atom.mass);
   sdc.preprocess(number_of_atoms, time_step, group);
   msd.preprocess(number_of_atoms, time_step, group);
-  rdf.preprocess(integrate.type >= 31, atom.number_of_beads,number_of_atoms, atom.cpu_type_size);
+  rdf.preprocess(integrate.type >= 31, atom.number_of_beads, number_of_atoms, atom.cpu_type_size);
   hac.preprocess(number_of_steps);
   viscosity.preprocess(number_of_steps);
   shc.preprocess(number_of_atoms, group);
@@ -52,6 +55,9 @@ void Measure::initialize(
   dump_exyz.preprocess(number_of_atoms);
   dump_beads.preprocess(number_of_atoms, atom.number_of_beads);
   dump_observer.preprocess(number_of_atoms, number_of_potentials, force);
+  dump_piston.preprocess(atom, box);
+  dump_dipole.preprocess(number_of_atoms, number_of_potentials, force);
+  dump_polarizability.preprocess(number_of_atoms, number_of_potentials, force);
   active.preprocess(number_of_atoms, number_of_potentials, force);
 #ifdef USE_NETCDF
   dump_netcdf.preprocess(number_of_atoms);
@@ -62,7 +68,14 @@ void Measure::initialize(
 }
 
 void Measure::finalize(
-  Integrate& integrate, const int number_of_steps, const double time_step, const double temperature, const double volume, const double number_of_beads)
+  Atom& atom,
+  Box& box,
+  Integrate& integrate,
+  const int number_of_steps,
+  const double time_step,
+  const double temperature,
+  const double volume,
+  const double number_of_beads)
 {
   dump_position.postprocess();
   dump_velocity.postprocess();
@@ -72,6 +85,9 @@ void Measure::finalize(
   dump_exyz.postprocess();
   dump_beads.postprocess();
   dump_observer.postprocess();
+  dump_piston.postprocess();
+  dump_dipole.postprocess();
+  dump_polarizability.postprocess();
   active.postprocess();
   dos.postprocess();
   sdc.postprocess();
@@ -142,22 +158,12 @@ void Measure::process(
     atom.cpu_position_per_atom,
     atom.cpu_velocity_per_atom);
   dump_force.process(step, group, atom.force_per_atom);
-  dump_exyz.process(
-    step,
-    global_time,
-    box,
-    atom.cpu_atom_symbol,
-    atom.cpu_type,
-    atom.position_per_atom,
-    atom.cpu_position_per_atom,
-    atom.velocity_per_atom,
-    atom.cpu_velocity_per_atom,
-    atom.force_per_atom,
-    atom.virial_per_atom,
-    thermo);
+  dump_exyz.process(step, global_time, box, atom, thermo);
   dump_beads.process(step, global_time, box, atom);
   dump_observer.process(
     step, global_time, number_of_atoms_fixed, group, box, atom, force, integrate, thermo);
+  dump_dipole.process(step, global_time, number_of_atoms_fixed, group, box, atom, force);
+  dump_polarizability.process(step, global_time, number_of_atoms_fixed, group, box, atom, force);
   active.process(step, global_time, number_of_atoms_fixed, group, box, atom, force, thermo);
 
   compute.process(
@@ -196,7 +202,10 @@ void Measure::process(
     atom.heat_per_atom);
   modal_analysis.process(
     step, temperature, box.get_volume(), hnemd.fe, atom.velocity_per_atom, atom.virial_per_atom);
-    
+
+  lsqt.process(atom, box, step);
+  dump_piston.process(atom, box, step);
+
 #ifdef USE_NETCDF
   dump_netcdf.process(
     step,

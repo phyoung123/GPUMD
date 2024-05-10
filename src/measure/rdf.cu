@@ -27,6 +27,7 @@ Calculate:
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 
 namespace
 {
@@ -528,7 +529,7 @@ void RDF::postprocess(const bool is_pimd, const int number_of_beads)
       }
     }
 
-    FILE* fid = fopen("rdf_pimd.out", "w");
+    FILE* fid = fopen("rdf.out", "a");
     fprintf(fid, "#radius");
     for (int a = 0; a < rdf_atom_count; a++) {
       if (a == 0) {
@@ -572,7 +573,7 @@ void RDF::postprocess(const bool is_pimd, const int number_of_beads)
       }
     }
 
-    FILE* fid = fopen("rdf.out", "w");
+    FILE* fid = fopen("rdf.out", "a");
     fprintf(fid, "#radius");
     for (int a = 0; a < rdf_atom_count; a++) {
       if (a == 0) {

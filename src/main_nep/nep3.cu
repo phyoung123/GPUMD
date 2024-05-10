@@ -273,12 +273,8 @@ NEP3::NEP3(
   if (zbl.flexibled) {
     zbl.num_types = para.num_types;
     int num_type_zbl = (para.num_types * (para.num_types + 1)) / 2;
-    for (int n = 0; n < num_type_zbl; ++n) {
-      zbl.rc_flexible_inner[n] = para.zbl_para[n];
-      zbl.rc_flexible_outer[n] = para.zbl_para[n + num_type_zbl];
-    }
-    for (int n = 0; n < num_type_zbl * 6; ++n) {
-      zbl.para[n] = para.zbl_para[n + 2 * num_type_zbl];
+    for (int n = 0; n < num_type_zbl * 10; ++n) {
+      zbl.para[n] = para.zbl_para[n];
     }
   }
 
@@ -469,6 +465,48 @@ static __global__ void apply_ann_pol(
       q,
       F,
       Fp);
+
+    for (int d = 0; d < annmb.dim; ++d) {
+      g_Fp[n1 + d * N] = Fp[d] * g_q_scaler[d];
+    }
+  }
+}
+
+static __global__ void apply_ann_temperature(
+  const int N,
+  const NEP3::ParaMB paramb,
+  const NEP3::ANN annmb,
+  const int* __restrict__ g_type,
+  const float* __restrict__ g_descriptors,
+  float* __restrict__ g_q_scaler,
+  const float* __restrict__ g_temperature,
+  float* g_pe,
+  float* g_Fp)
+{
+  int n1 = threadIdx.x + blockIdx.x * blockDim.x;
+  int type = g_type[n1];
+  float temperature = g_temperature[n1];
+  if (n1 < N) {
+    // get descriptors
+    float q[MAX_DIM] = {0.0f};
+    for (int d = 0; d < annmb.dim - 1; ++d) {
+      q[d] = g_descriptors[n1 + d * N] * g_q_scaler[d];
+    }
+    g_q_scaler[annmb.dim - 1] = 0.001; // temperature dimension scaler
+    q[annmb.dim - 1] = temperature * g_q_scaler[annmb.dim - 1];
+    // get energy and energy gradient
+    float F = 0.0f, Fp[MAX_DIM] = {0.0f};
+    apply_ann_one_layer(
+      annmb.dim,
+      annmb.num_neurons1,
+      annmb.w0[type],
+      annmb.b0[type],
+      annmb.w1[type],
+      annmb.b1,
+      q,
+      F,
+      Fp);
+    g_pe[n1] = F;
 
     for (int d = 0; d < annmb.dim; ++d) {
       g_Fp[n1 + d * N] = Fp[d] * g_q_scaler[d];
@@ -755,13 +793,11 @@ static __global__ void find_force_ZBL(
           t2 = type1;
         }
         int zbl_index = t1 * zbl.num_types - (t1 * (t1 - 1)) / 2 + (t2 - t1);
-        float rc_inner = zbl.rc_flexible_inner[zbl_index];
-        float rc_outer = zbl.rc_flexible_outer[zbl_index];
-        float ZBL_para[6];
-        for (int i = 0; i < 6; ++i) {
-          ZBL_para[i] = zbl.para[6 * zbl_index + i];
+        float ZBL_para[10];
+        for (int i = 0; i < 10; ++i) {
+          ZBL_para[i] = zbl.para[10 * zbl_index + i];
         }
-        find_f_and_fp_zbl(ZBL_para, zizj, a_inv, rc_inner, rc_outer, d12, d12inv, f, fp);
+        find_f_and_fp_zbl(ZBL_para, zizj, a_inv, d12, d12inv, f, fp);
       } else {
         find_f_and_fp_zbl(zizj, a_inv, zbl.rc_inner, zbl.rc_outer, d12, d12inv, f, fp);
       }
@@ -895,6 +931,18 @@ void NEP3::find_force(
         nep_data[device_id].descriptors.data(),
         para.q_scaler_gpu[device_id].data(),
         dataset[device_id].virial.data(),
+        nep_data[device_id].Fp.data());
+      CUDA_CHECK_KERNEL
+    } else if (para.train_mode == 3) {
+      apply_ann_temperature<<<grid_size, block_size>>>(
+        dataset[device_id].N,
+        paramb,
+        annmb[device_id],
+        dataset[device_id].type.data(),
+        nep_data[device_id].descriptors.data(),
+        para.q_scaler_gpu[device_id].data(),
+        dataset[device_id].temperature_ref_gpu.data(),
+        dataset[device_id].energy.data(),
         nep_data[device_id].Fp.data());
       CUDA_CHECK_KERNEL
     } else {

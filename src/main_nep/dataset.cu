@@ -30,6 +30,9 @@ void Dataset::copy_structures(std::vector<Structure>& structures_input, int n1, 
     structures[n].weight = structures_input[n_input].weight;
     structures[n].has_virial = structures_input[n_input].has_virial;
     structures[n].energy = structures_input[n_input].energy;
+    structures[n].has_temperature = structures_input[n_input].has_temperature;
+    structures[n].temperature = structures_input[n_input].temperature;
+    structures[n].volume = structures_input[n_input].volume;
     for (int k = 0; k < 6; ++k) {
       structures[n].virial[k] = structures_input[n_input].virial[k];
     }
@@ -101,7 +104,7 @@ void Dataset::find_Na(Parameters& para)
 
   printf("Total number of atoms = %d.\n", N);
   printf("Number of atoms in the largest configuration = %d.\n", max_Na);
-  if (para.train_mode == 0) {
+  if (para.train_mode == 0 || para.train_mode == 3) {
     printf("Number of configurations having virial = %d.\n", num_virial_configurations);
   }
 
@@ -130,6 +133,7 @@ void Dataset::initialize_gpu_data(Parameters& para)
   energy_ref_cpu.resize(Nc);
   virial_ref_cpu.resize(Nc * 6);
   force_ref_cpu.resize(N * 3);
+  temperature_ref_cpu.resize(N);
 
   for (int n = 0; n < Nc; ++n) {
     weight_cpu[n] = structures[n].weight;
@@ -154,6 +158,7 @@ void Dataset::initialize_gpu_data(Parameters& para)
       force_ref_cpu[Na_sum_cpu[n] + na] = structures[n].fx[na];
       force_ref_cpu[Na_sum_cpu[n] + na + N] = structures[n].fy[na];
       force_ref_cpu[Na_sum_cpu[n] + na + N * 2] = structures[n].fz[na];
+      temperature_ref_cpu[Na_sum_cpu[n] + na] = structures[n].temperature;
     }
   }
 
@@ -161,10 +166,12 @@ void Dataset::initialize_gpu_data(Parameters& para)
   energy_ref_gpu.resize(Nc);
   virial_ref_gpu.resize(Nc * 6);
   force_ref_gpu.resize(N * 3);
+  temperature_ref_gpu.resize(N);
   type_weight_gpu.copy_from_host(para.type_weight_cpu.data());
   energy_ref_gpu.copy_from_host(energy_ref_cpu.data());
   virial_ref_gpu.copy_from_host(virial_ref_cpu.data());
   force_ref_gpu.copy_from_host(force_ref_cpu.data());
+  temperature_ref_gpu.copy_from_host(temperature_ref_cpu.data());
 
   box.resize(Nc * 18);
   box_original.resize(Nc * 9);
@@ -407,6 +414,7 @@ std::vector<float> Dataset::get_rmse_force(Parameters& para, const bool use_weig
   return rmse_array;
 }
 
+#ifndef USE_FIXED_SCALER
 static __global__ void
 gpu_get_energy_shift(int* g_Na, int* g_Na_sum, float* g_pe, float* g_pe_ref, float* g_energy_shift)
 {
@@ -442,6 +450,7 @@ gpu_get_energy_shift(int* g_Na, int* g_Na_sum, float* g_pe, float* g_pe_ref, flo
     g_energy_shift[bid] = diff;
   }
 }
+#endif
 
 static __global__ void gpu_sum_pe_error(
   float energy_shift, int* g_Na, int* g_Na_sum, float* g_pe, float* g_pe_ref, float* error_gpu)
@@ -492,6 +501,7 @@ std::vector<float> Dataset::get_rmse_energy(
   const int block_size = 256;
   int mem = sizeof(float) * Nc;
 
+#ifndef USE_FIXED_SCALER
   if (do_shift) {
     gpu_get_energy_shift<<<Nc, block_size, sizeof(float) * block_size>>>(
       Na.data(), Na_sum.data(), energy.data(), energy_ref_gpu.data(), error_gpu.data());
@@ -501,6 +511,7 @@ std::vector<float> Dataset::get_rmse_energy(
     }
     energy_shift_per_structure /= Nc;
   }
+#endif
 
   gpu_sum_pe_error<<<Nc, block_size, sizeof(float) * block_size>>>(
     energy_shift_per_structure,

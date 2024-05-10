@@ -23,10 +23,11 @@ The Bussi-Parrinello integrator of the Langevin thermostat:
 #include "utilities/common.cuh"
 #include <cstdlib>
 
-Ensemble_LAN::Ensemble_LAN(int t, int fg, int N, double T, double Tc)
+Ensemble_LAN::Ensemble_LAN() {}
+
+Ensemble_LAN::Ensemble_LAN(int t, int N, double T, double Tc)
 {
   type = t;
-  fixed_group = fg;
   temperature = T;
   temperature_coupling = Tc;
   c1 = exp(-0.5 / temperature_coupling);
@@ -39,7 +40,6 @@ Ensemble_LAN::Ensemble_LAN(int t, int fg, int N, double T, double Tc)
 
 Ensemble_LAN::Ensemble_LAN(
   int t,
-  int fg,
   int source_input,
   int sink_input,
   int source_size,
@@ -51,7 +51,6 @@ Ensemble_LAN::Ensemble_LAN(
   double dT)
 {
   type = t;
-  fixed_group = fg;
   temperature = T;
   temperature_coupling = Tc;
   delta_temperature = dT;

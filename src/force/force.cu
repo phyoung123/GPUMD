@@ -28,6 +28,7 @@ The driver class calculating force and related quantities.
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
 #include "utilities/read_file.cuh"
+#include <cstring>
 #include <iostream>
 #include <vector>
 
@@ -66,7 +67,7 @@ void Force::parse_potential(
 
   std::unique_ptr<Potential> potential;
   FILE* fid_potential = my_fopen(param[1], "r");
-  char potential_name[20];
+  char potential_name[100];
   int count = fscanf(fid_potential, "%s", potential_name);
   if (count != 1) {
     PRINT_INPUT_ERROR("reading error for potential file.");
@@ -90,8 +91,19 @@ void Force::parse_potential(
     is_fcp = true;
   } else if (
     strcmp(potential_name, "nep") == 0 || strcmp(potential_name, "nep_zbl") == 0 ||
-    strcmp(potential_name, "nep3") == 0 || strcmp(potential_name, "nep3_zbl") == 0 ||
-    strcmp(potential_name, "nep4") == 0 || strcmp(potential_name, "nep4_zbl") == 0) {
+    strcmp(potential_name, "nep_dipole") == 0 ||
+    strcmp(potential_name, "nep_polarizability") == 0 || strcmp(potential_name, "nep3") == 0 ||
+    strcmp(potential_name, "nep3_zbl") == 0 || strcmp(potential_name, "nep4") == 0 ||
+    strcmp(potential_name, "nep4_zbl") == 0 || strcmp(potential_name, "nep3_dipole") == 0 ||
+    strcmp(potential_name, "nep3_polarizability") == 0 ||
+    strcmp(potential_name, "nep4_dipole") == 0 ||
+    strcmp(potential_name, "nep4_polarizability") == 0 ||
+    strcmp(potential_name, "nep_temperature") == 0 ||
+    strcmp(potential_name, "nep_zbl_temperature") == 0 ||
+    strcmp(potential_name, "nep3_temperature") == 0 ||
+    strcmp(potential_name, "nep3_zbl_temperature") == 0 ||
+    strcmp(potential_name, "nep4_temperature") == 0 ||
+    strcmp(potential_name, "nep4_zbl_temperature") == 0) {
     int num_gpus;
     CHECK(cudaGetDeviceCount(&num_gpus));
 #ifdef ZHEYONG
@@ -456,14 +468,36 @@ void Force::compute(
 
   if (multiple_potentials_mode_.compare("observe") == 0) {
     // If observing, calculate using main potential only
-    potentials[0]->compute(
-      box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+    if (3 == potentials[0]->nep_model_type) {
+      potentials[0]->compute(
+        temperature,
+        box,
+        type,
+        position_per_atom,
+        potential_per_atom,
+        force_per_atom,
+        virial_per_atom);
+    } else {
+      potentials[0]->compute(
+        box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+    }
   } else if (multiple_potentials_mode_.compare("average") == 0) {
     // Calculate average potential, force and virial per atom.
     for (int i = 0; i < potentials.size(); i++) {
       // potential->compute automatically adds the properties
-      potentials[i]->compute(
-        box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+      if (3 == potentials[i]->nep_model_type) {
+        potentials[i]->compute(
+          temperature,
+          box,
+          type,
+          position_per_atom,
+          potential_per_atom,
+          force_per_atom,
+          virial_per_atom);
+      } else {
+        potentials[i]->compute(
+          box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+      }
     }
     // Compute average and copy properties back into original vectors.
     gpu_average_properties<<<(number_of_atoms - 1) / 128 + 1, 128>>>(
@@ -718,16 +752,39 @@ void Force::compute(
     virial_per_atom.data());
   CUDA_CHECK_KERNEL
 
+  temperature += delta_T;
   if (multiple_potentials_mode_.compare("observe") == 0) {
     // If observing, calculate using main potential only
-    potentials[0]->compute(
-      box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+    if (3 == potentials[0]->nep_model_type) {
+      potentials[0]->compute(
+        temperature,
+        box,
+        type,
+        position_per_atom,
+        potential_per_atom,
+        force_per_atom,
+        virial_per_atom);
+    } else {
+      potentials[0]->compute(
+        box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+    }
   } else if (multiple_potentials_mode_.compare("average") == 0) {
     // Calculate average potential, force and virial per atom.
     for (int i = 0; i < potentials.size(); i++) {
       // potential->compute automatically adds the properties
-      potentials[i]->compute(
-        box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+      if (3 == potentials[i]->nep_model_type) {
+        potentials[i]->compute(
+          temperature,
+          box,
+          type,
+          position_per_atom,
+          potential_per_atom,
+          force_per_atom,
+          virial_per_atom);
+      } else {
+        potentials[i]->compute(
+          box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+      }
     }
     // Compute average and copy properties back into original vectors.
     gpu_average_properties<<<(number_of_atoms - 1) / 128 + 1, 128>>>(

@@ -24,6 +24,8 @@ public:
   int N1;
   int N2;
   double rc; // maximum cutoff distance
+  int nep_model_type =
+    -1; // -1 for non_nep, 0 for potential, 1 for dipole, 2 for polarizability, 3 for temperature
   Potential(void);
   virtual ~Potential(void);
 
@@ -34,6 +36,15 @@ public:
     GPU_Vector<double>& potential,
     GPU_Vector<double>& force,
     GPU_Vector<double>& virial) = 0;
+
+  virtual void compute(
+    const float temperature,
+    Box& box,
+    const GPU_Vector<int>& type,
+    const GPU_Vector<double>& position,
+    GPU_Vector<double>& potential,
+    GPU_Vector<double>& force,
+    GPU_Vector<double>& virial){};
 
 protected:
   void find_properties_many_body(
@@ -54,6 +65,7 @@ protected:
     const float* f12x,
     const float* f12y,
     const float* f12z,
+    const bool is_dipole,
     const GPU_Vector<double>& position_per_atom,
     GPU_Vector<double>& force_per_atom,
     GPU_Vector<double>& virial_per_atom);

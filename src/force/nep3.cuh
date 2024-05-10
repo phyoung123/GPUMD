@@ -14,9 +14,11 @@
 */
 
 #pragma once
+#include "dftd3.cuh"
 #include "potential.cuh"
 #include "utilities/common.cuh"
 #include "utilities/gpu_vector.cuh"
+#define PARAM_SIZE 100
 
 struct NEP3_Data {
   GPU_Vector<float> f12x; // 3-body or manybody partial forces
@@ -46,7 +48,9 @@ class NEP3 : public Potential
 {
 public:
   struct ParaMB {
-    int version = 2;            // NEP version, 2 for NEP2 and 3 for NEP3
+    int version = 2; // NEP version, 2 for NEP2 and 3 for NEP3
+    int model_type =
+      0; // 0=potential, 1=dipole, 2=polarizability, 3=temperature-dependent free energy
     float rc_radial = 0.0f;     // radial cutoff
     float rc_angular = 0.0f;    // angular cutoff
     float rcinv_radial = 0.0f;  // inverse of the radial cutoff
@@ -67,14 +71,19 @@ public:
   };
 
   struct ANN {
-    int dim = 0;          // dimension of the descriptor
-    int num_neurons1 = 0; // number of neurons in the 1st hidden layer
-    int num_para = 0;     // number of parameters
-    const float* w0[100]; // weight from the input layer to the hidden layer
-    const float* b0[100]; // bias for the hidden layer
-    const float* w1[100]; // weight from the hidden layer to the output layer
-    const float* b1;      // bias for the output layer
+    int dim = 0;                 // dimension of the descriptor
+    int num_neurons1 = 0;        // number of neurons in the 1st hidden layer
+    int num_para = 0;            // number of parameters
+    const float* w0[PARAM_SIZE]; // weight from the input layer to the hidden layer
+    const float* b0[PARAM_SIZE]; // bias for the hidden layer
+    const float* w1[PARAM_SIZE]; // weight from the hidden layer to the output layer
+    const float* b1;             // bias for the output layer
     const float* c;
+    // for the scalar part of polarizability
+    const float* w0_pol[10];
+    const float* b0_pol[10];
+    const float* w1_pol[10];
+    const float* b1_pol;
   };
 
   struct ZBL {
@@ -82,9 +91,7 @@ public:
     bool flexibled = false;
     float rc_inner = 1.0f;
     float rc_outer = 2.0f;
-    float rc_flexible_inner[55];
-    float rc_flexible_outer[55];
-    float para[330];
+    float para[550];
     float atomic_numbers[NUM_ELEMENTS];
     int num_types;
   };
@@ -104,12 +111,22 @@ public:
     GPU_Vector<double>& force,
     GPU_Vector<double>& virial);
 
+  virtual void compute(
+    const float temperature,
+    Box& box,
+    const GPU_Vector<int>& type,
+    const GPU_Vector<double>& position,
+    GPU_Vector<double>& potential,
+    GPU_Vector<double>& force,
+    GPU_Vector<double>& virial);
+
 private:
   ParaMB paramb;
   ANN annmb;
   ZBL zbl;
   NEP3_Data nep_data;
   ExpandedBox ebox;
+  DFTD3 dftd3;
 
   void update_potential(float* parameters, ANN& ann);
 #ifdef USE_TABLE
@@ -131,4 +148,25 @@ private:
     GPU_Vector<double>& potential,
     GPU_Vector<double>& force,
     GPU_Vector<double>& virial);
+
+  void compute_small_box(
+    const float temperature,
+    Box& box,
+    const GPU_Vector<int>& type,
+    const GPU_Vector<double>& position,
+    GPU_Vector<double>& potential,
+    GPU_Vector<double>& force,
+    GPU_Vector<double>& virial);
+
+  void compute_large_box(
+    const float temperature,
+    Box& box,
+    const GPU_Vector<int>& type,
+    const GPU_Vector<double>& position,
+    GPU_Vector<double>& potential,
+    GPU_Vector<double>& force,
+    GPU_Vector<double>& virial);
+
+  bool has_dftd3 = false;
+  void initialize_dftd3();
 };

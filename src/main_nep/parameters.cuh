@@ -26,6 +26,7 @@ public:
   // parameters to be read in
   int version;            // nep version, can be 2 or 3
   int batch_size;         // number of configurations in one batch
+  int use_full_batch;     // 1 for effective full-batch even though batch_size is not full-batch
   int num_types;          // number of atom types
   int population_size;    // population size for SNES
   int maximum_generation; // maximum number of generations for SNES;
@@ -47,11 +48,11 @@ public:
   float lambda_shear;     // extra weight parameter for shear virial
   float force_delta;      // a parameters used to modify the force loss
   bool enable_zbl;        // true for inlcuding the universal ZBL potential
-  bool flexible_zbl;      // true for inlcuding the flexible ZBL potential 
+  bool flexible_zbl;      // true for inlcuding the flexible ZBL potential
   float zbl_rc_inner;     // inner cutoff for the universal ZBL potential
   float zbl_rc_outer;     // outer cutoff for the universal ZBL potential
-  int train_mode;         // 0=potential, 1=dipole, 2=polarizability
-  int prediction;         // 0=no, 1=yes
+  int train_mode; // 0=potential, 1=dipole, 2=polarizability, 3=temperature-dependent free energy
+  int prediction; // 0=no, 1=yes
 
   // check if a parameter has been set:
   bool is_train_mode_set;

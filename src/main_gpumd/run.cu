@@ -27,6 +27,7 @@ Run simulation according to the inputs in the run.in file.
 #include "model/box.cuh"
 #include "model/read_xyz.cuh"
 #include "phonon/hessian.cuh"
+#include "replicate.cuh"
 #include "run.cuh"
 #include "utilities/error.cuh"
 #include "utilities/read_file.cuh"
@@ -107,9 +108,9 @@ Run::Run()
   fflush(stdout);
   print_line_2();
 
-  initialize_position(N, has_velocity_in_xyz, number_of_types, box, group, atom);
+  initialize_position(has_velocity_in_xyz, number_of_types, box, group, atom);
 
-  allocate_memory_gpu(N, group, atom, thermo);
+  allocate_memory_gpu(group, atom, thermo);
 
   print_line_1();
   printf("Finished initializing positions and related parameters.\n");
@@ -157,8 +158,9 @@ void Run::execute_run_in()
 
 void Run::perform_a_run()
 {
-  integrate.initialize(N, time_step, group, atom);
-  measure.initialize(number_of_steps, time_step, integrate, group, atom, force);
+  integrate.initialize(time_step, atom, box, group, thermo, number_of_steps);
+  mc.initialize();
+  measure.initialize(number_of_steps, time_step, integrate, group, atom, box, force);
 
 #ifdef USE_PLUMED
   if (measure.plmd.use_plumed == 1) {
@@ -167,6 +169,34 @@ void Run::perform_a_run()
 #endif
 
   clock_t time_begin = clock();
+
+  // compute force for the first integrate step
+  if (integrate.type >= 31) { // PIMD
+    for (int k = 0; k < integrate.number_of_beads; ++k) {
+      force.compute(
+        box,
+        atom.position_beads[k],
+        atom.type,
+        group,
+        atom.potential_beads[k],
+        atom.force_beads[k],
+        atom.virial_beads[k],
+        atom.velocity_beads[k],
+        atom.mass);
+    }
+  } else {
+    force.compute(
+      box,
+      atom.position_per_atom,
+      atom.type,
+      group,
+      atom.potential_per_atom,
+      atom.force_per_atom,
+      atom.virial_per_atom,
+      atom.velocity_per_atom,
+      atom.mass);
+  }
+
   double initial_time_step = time_step;
 
   for (int step = 0; step < number_of_steps; ++step) {
@@ -175,6 +205,7 @@ void Run::perform_a_run()
       max_distance_per_step, atom.velocity_per_atom, initial_time_step, time_step);
     global_time += time_step;
 
+    integrate.current_step = step;
     integrate.compute1(time_step, double(step) / number_of_steps, group, box, atom, thermo);
 
     if (integrate.type >= 31) { // PIMD
@@ -214,6 +245,8 @@ void Run::perform_a_run()
 
     integrate.compute2(time_step, double(step) / number_of_steps, group, box, atom, thermo);
 
+    mc.compute(step, number_of_steps, atom, box, group);
+
     measure.process(
       number_of_steps,
       step,
@@ -248,14 +281,23 @@ void Run::perform_a_run()
   double time_used = (time_finish - time_begin) / (double)CLOCKS_PER_SEC;
 
   printf("Time used for this run = %g second.\n", time_used);
-  double run_speed = N * (number_of_steps / time_used);
+  double run_speed = atom.number_of_atoms * (number_of_steps / time_used);
   printf("Speed of this run = %g atom*step/second.\n", run_speed);
   print_line_2();
 
-  measure.finalize(integrate, number_of_steps, time_step, integrate.temperature2, box.get_volume(),atom.number_of_beads);
+  measure.finalize(
+    atom,
+    box,
+    integrate,
+    number_of_steps,
+    time_step,
+    integrate.temperature2,
+    box.get_volume(),
+    atom.number_of_beads);
 
   electron_stop.finalize();
   integrate.finalize();
+  mc.finalize();
   velocity.finalize();
   max_distance_per_step = 0.0;
 }
@@ -263,13 +305,19 @@ void Run::perform_a_run()
 void Run::parse_one_keyword(std::vector<std::string>& tokens)
 {
   int num_param = tokens.size();
-  const char* param[22]; // never use more than 19 parameters
+  const int max_num_param = 32;
+  if (num_param > max_num_param)
+    PRINT_INPUT_ERROR("The number of parameters should be less than 32.\n");
+  const char* param[max_num_param];
   for (int n = 0; n < num_param; ++n) {
     param[n] = tokens[n].c_str();
   }
 
   if (strcmp(param[0], "potential") == 0) {
     force.parse_potential(param, num_param, box, atom.type.size());
+  } else if (strcmp(param[0], "replicate") == 0) {
+    Replicate(param, num_param, box, atom, group);
+    allocate_memory_gpu(group, atom, thermo);
   } else if (strcmp(param[0], "minimize") == 0) {
     Minimize minimize;
     minimize.parse_minimize(
@@ -325,7 +373,7 @@ void Run::parse_one_keyword(std::vector<std::string>& tokens)
   } else if (strcmp(param[0], "velocity") == 0) {
     parse_velocity(param, num_param);
   } else if (strcmp(param[0], "ensemble") == 0) {
-    integrate.parse_ensemble(box, param, num_param, group);
+    integrate.parse_ensemble(param, num_param, time_step, atom, box, group, thermo);
   } else if (strcmp(param[0], "time_step") == 0) {
     parse_time_step(param, num_param);
   } else if (strcmp(param[0], "correct_velocity") == 0) {
@@ -358,6 +406,12 @@ void Run::parse_one_keyword(std::vector<std::string>& tokens)
     measure.dump_beads.parse(param, num_param);
   } else if (strcmp(param[0], "dump_observer") == 0) {
     measure.dump_observer.parse(param, num_param);
+  } else if (strcmp(param[0], "dump_piston") == 0) {
+    measure.dump_piston.parse(param, num_param);
+  } else if (strcmp(param[0], "dump_dipole") == 0) {
+    measure.dump_dipole.parse(param, num_param);
+  } else if (strcmp(param[0], "dump_polarizability") == 0) {
+    measure.dump_polarizability.parse(param, num_param);
   } else if (strcmp(param[0], "active") == 0) {
     measure.active.parse(param, num_param);
   } else if (strcmp(param[0], "compute_dos") == 0) {
@@ -366,7 +420,7 @@ void Run::parse_one_keyword(std::vector<std::string>& tokens)
     measure.sdc.parse(param, num_param, group);
   } else if (strcmp(param[0], "compute_msd") == 0) {
     measure.msd.parse(param, num_param, group);
-  }  else if (strcmp(param[0], "compute_rdf") == 0) {
+  } else if (strcmp(param[0], "compute_rdf") == 0) {
     measure.rdf.parse(param, num_param, box, number_of_types, number_of_steps);
   } else if (strcmp(param[0], "compute_hac") == 0) {
     measure.hac.parse(param, num_param);
@@ -392,6 +446,12 @@ void Run::parse_one_keyword(std::vector<std::string>& tokens)
     integrate.parse_move(param, num_param, group);
   } else if (strcmp(param[0], "electron_stop") == 0) {
     electron_stop.parse(param, num_param, atom.number_of_atoms, number_of_types);
+  } else if (strcmp(param[0], "mc") == 0) {
+    mc.parse_mc(param, num_param, group, atom);
+  } else if (strcmp(param[0], "dftd3") == 0) {
+    // nothing here; will be handled elsewhere
+  } else if (strcmp(param[0], "compute_lsqt") == 0) {
+    measure.lsqt.parse(param, num_param);
   } else if (strcmp(param[0], "run") == 0) {
     parse_run(param, num_param);
   } else {
@@ -401,8 +461,10 @@ void Run::parse_one_keyword(std::vector<std::string>& tokens)
 
 void Run::parse_velocity(const char** param, int num_param)
 {
-  if (num_param != 2) {
-    PRINT_INPUT_ERROR("velocity should have 1 parameter.\n");
+  int seed;
+  bool use_seed = false;
+  if (!(num_param == 2 || num_param == 4)) {
+    PRINT_INPUT_ERROR("velocity should have 1 or 2 parameters.\n");
   }
   if (!is_valid_real(param[1], &initial_temperature)) {
     PRINT_INPUT_ERROR("initial temperature should be a real number.\n");
@@ -410,13 +472,21 @@ void Run::parse_velocity(const char** param, int num_param)
   if (initial_temperature <= 0.0) {
     PRINT_INPUT_ERROR("initial temperature should be a positive number.\n");
   }
+  if (num_param == 4) {
+    use_seed = true;
+    if (!is_valid_int(param[3], &seed)) {
+      PRINT_INPUT_ERROR("seed should be a positive integer.\n");
+    }
+  }
   velocity.initialize(
     has_velocity_in_xyz,
     initial_temperature,
     atom.cpu_mass,
     atom.cpu_position_per_atom,
     atom.cpu_velocity_per_atom,
-    atom.velocity_per_atom);
+    atom.velocity_per_atom,
+    use_seed,
+    seed);
 }
 
 void Run::parse_correct_velocity(const char** param, int num_param)
@@ -482,8 +552,12 @@ void Run::parse_run(const char** param, int num_param)
       atom.cpu_mass,
       atom.cpu_type,
       atom.cpu_type_size,
-      integrate.temperature2);
+      integrate.temperature1);
   }
+
+  // set target temperature for temperature-dependent NEP
+  force.temperature = integrate.temperature1;
+  force.delta_T = (integrate.temperature2 - integrate.temperature1) / number_of_steps;
 
   perform_a_run();
 }

@@ -21,18 +21,34 @@ The driver class for the various integrators.
 #include "ensemble_bdp.cuh"
 #include "ensemble_ber.cuh"
 #include "ensemble_lan.cuh"
+#include "ensemble_mirror.cuh"
+#include "ensemble_msst.cuh"
+#include "ensemble_mttk.cuh"
 #include "ensemble_nhc.cuh"
+#include "ensemble_nphug.cuh"
 #include "ensemble_npt_scr.cuh"
 #include "ensemble_nve.cuh"
 #include "ensemble_pimd.cuh"
+#include "ensemble_piston.cuh"
+#include "ensemble_ti.cuh"
+#include "ensemble_ti_as.cuh"
+#include "ensemble_ti_rs.cuh"
+#include "ensemble_ti_spring.cuh"
 #include "integrate.cuh"
 #include "model/atom.cuh"
 #include "utilities/common.cuh"
 #include "utilities/read_file.cuh"
 
 void Integrate::initialize(
-  const int number_of_atoms, const double time_step, const std::vector<Group>& group, Atom& atom)
+  double time_step,
+  Atom& atom,
+  Box& box,
+  std::vector<Group>& group,
+  GPU_Vector<double>& thermo,
+  int& total_steps)
 {
+  this->total_steps = total_steps;
+  int number_of_atoms = atom.number_of_atoms;
   if (move_group >= 0) {
     if (fixed_group < 0) {
       PRINT_INPUT_ERROR("It is not allowed to have moving group but no fixed group.");
@@ -49,16 +65,15 @@ void Integrate::initialize(
   // determine the integrator
   switch (type) {
     case 0: // NVE
-      ensemble.reset(new Ensemble_NVE(type, fixed_group));
+      ensemble.reset(new Ensemble_NVE(type));
       break;
     case 1: // NVT-Berendsen
-      ensemble.reset(new Ensemble_BER(
-        type, fixed_group, move_group, move_velocity, temperature, temperature_coupling));
+      ensemble.reset(
+        new Ensemble_BER(type, move_group, move_velocity, temperature, temperature_coupling));
       break;
     case 2: // NVT-NHC
       ensemble.reset(new Ensemble_NHC(
         type,
-        fixed_group,
         move_group,
         move_velocity,
         number_of_atoms,
@@ -67,21 +82,18 @@ void Integrate::initialize(
         time_step));
       break;
     case 3: // NVT-Langevin
-      ensemble.reset(
-        new Ensemble_LAN(type, fixed_group, number_of_atoms, temperature, temperature_coupling));
+      ensemble.reset(new Ensemble_LAN(type, number_of_atoms, temperature, temperature_coupling));
       break;
     case 4: // NVT-BDP
-      ensemble.reset(new Ensemble_BDP(
-        type, fixed_group, move_group, move_velocity, temperature, temperature_coupling));
+      ensemble.reset(
+        new Ensemble_BDP(type, move_group, move_velocity, temperature, temperature_coupling));
       break;
     case 5: // NVT-BAOAB_Langevin
-      ensemble.reset(
-        new Ensemble_BAO(type, fixed_group, number_of_atoms, temperature, temperature_coupling));
+      ensemble.reset(new Ensemble_BAO(type, number_of_atoms, temperature, temperature_coupling));
       break;
     case 11: // NPT-Berendsen
       ensemble.reset(new Ensemble_BER(
         type,
-        fixed_group,
         temperature,
         temperature_coupling,
         target_pressure,
@@ -95,7 +107,6 @@ void Integrate::initialize(
     case 12: // NPT-SCR
       ensemble.reset(new Ensemble_NPT_SCR(
         type,
-        fixed_group,
         temperature,
         temperature_coupling,
         target_pressure,
@@ -106,10 +117,27 @@ void Integrate::initialize(
         deform_z,
         deform_rate));
       break;
+    case -1: // msst
+      break;
+    case -2: // ti_spring
+      break;
+    case -3: // mttk
+      break;
+    case -4: // piston
+      break;
+    case -5: // nphug
+      break;
+    case -6: // ti
+      break;
+    case -7: // mirror
+      break;
+    case -8: // ti_rs
+      break;
+    case -9: // ti_as
+      break;
     case 21: // heat-NHC
       ensemble.reset(new Ensemble_NHC(
         type,
-        fixed_group,
         source,
         sink,
         group[0].cpu_size[source],
@@ -122,7 +150,6 @@ void Integrate::initialize(
     case 22: // heat-Langevin
       ensemble.reset(new Ensemble_LAN(
         type,
-        fixed_group,
         source,
         sink,
         group[0].cpu_size[source],
@@ -134,8 +161,8 @@ void Integrate::initialize(
         delta_temperature));
       break;
     case 23: // heat-BDP
-      ensemble.reset(new Ensemble_BDP(
-        type, fixed_group, source, sink, temperature, temperature_coupling, delta_temperature));
+      ensemble.reset(
+        new Ensemble_BDP(type, source, sink, temperature, temperature_coupling, delta_temperature));
       break;
     case 31: // RPMD
       ensemble.reset(new Ensemble_PIMD(number_of_atoms, number_of_beads, false, atom));
@@ -162,6 +189,15 @@ void Integrate::initialize(
       printf("Illegal integrator!\n");
       break;
   }
+
+  ensemble->atom = &atom;
+  ensemble->box = &box;
+  ensemble->group = &group;
+  ensemble->time_step = time_step;
+  ensemble->current_step = &this->current_step;
+  ensemble->total_steps = &this->total_steps;
+  ensemble->thermo = &thermo;
+  ensemble->fixed_group = fixed_group;
 }
 
 void Integrate::finalize()
@@ -220,7 +256,7 @@ void Integrate::compute1(
 {
   if (type == 0 || type == 31 || type == 32) {
     ensemble->temperature = temperature2;
-  } else if (type <= 20 || type == 33) {
+  } else if (type > 0 && (type <= 20 || type == 33)) {
     ensemble->temperature =
       temperature1 + (temperature2 - temperature1) * step_over_number_of_steps;
   }
@@ -262,7 +298,7 @@ void Integrate::compute2(
 {
   if (type == 0 || type == 31 || type == 32) {
     ensemble->temperature = temperature2;
-  } else if (type <= 20 || type == 33) {
+  } else if (type > 0 && (type <= 20 || type == 33)) {
     ensemble->temperature =
       temperature1 + (temperature2 - temperature1) * step_over_number_of_steps;
   }
@@ -277,7 +313,13 @@ void Integrate::compute2(
 // 21-30: heat (NEMD method for heat conductivity)
 // 31-40: PIMD related
 void Integrate::parse_ensemble(
-  Box& box, const char** param, int num_param, std::vector<Group>& group)
+  const char** param,
+  int num_param,
+  double time_step,
+  Atom& atom,
+  Box& box,
+  std::vector<Group>& group,
+  GPU_Vector<double>& thermo)
 {
   // 1. Determine the integration method
   if (strcmp(param[1], "nve") == 0) {
@@ -320,6 +362,14 @@ void Integrate::parse_ensemble(
     if (num_param != 18 && num_param != 12 && num_param != 8) {
       PRINT_INPUT_ERROR("ensemble npt_scr should have 6, 10, or 16 parameters.");
     }
+  } else if (
+    strcmp(param[1], "nvt_mttk") == 0 || strcmp(param[1], "npt_mttk") == 0 ||
+    strcmp(param[1], "nph_mttk") == 0) {
+    type = -3;
+    Ensemble_MTTK* ptr_temp = new Ensemble_MTTK(param, num_param);
+    ensemble.reset(ptr_temp);
+    temperature1 = ptr_temp->t_start;
+    temperature2 = ptr_temp->t_stop;
   } else if (strcmp(param[1], "heat_nhc") == 0) {
     type = 21;
     if (num_param != 7) {
@@ -350,12 +400,36 @@ void Integrate::parse_ensemble(
     if (num_param != 6 && num_param != 9 && num_param != 13 && num_param != 19) {
       PRINT_INPUT_ERROR("ensemble pimd should have 4 or 7 or 11 or 17 parameters.");
     }
+  } else if (strcmp(param[1], "msst") == 0) {
+    type = -1;
+    ensemble.reset(new Ensemble_MSST(param, num_param));
+  } else if (strcmp(param[1], "ti_spring") == 0) {
+    type = -2;
+    ensemble.reset(new Ensemble_TI_Spring(param, num_param));
+  } else if (strcmp(param[1], "piston") == 0) {
+    type = -4;
+    ensemble.reset(new Ensemble_piston(param, num_param));
+  } else if (strcmp(param[1], "nphug") == 0) {
+    type = -5;
+    ensemble.reset(new Ensemble_NPHug(param, num_param));
+  } else if (strcmp(param[1], "ti") == 0) {
+    type = -6;
+    ensemble.reset(new Ensemble_TI(param, num_param));
+  } else if (strcmp(param[1], "mirror") == 0) {
+    type = -7;
+    ensemble.reset(new Ensemble_mirror(param, num_param));
+  } else if (strcmp(param[1], "ti_rs") == 0) {
+    type = -8;
+    ensemble.reset(new Ensemble_TI_RS(param, num_param));
+  } else if (strcmp(param[1], "ti_as") == 0) {
+    type = -9;
+    ensemble.reset(new Ensemble_TI_AS(param, num_param));
   } else {
     PRINT_INPUT_ERROR("Invalid ensemble type.");
   }
 
   // 2. Temperatures and temperature_coupling (NVT and NPT)
-  if (type >= 1 && type <= 20) {
+  if (type >= 1 && type < 20) {
     // initial temperature
     if (!is_valid_real(param[2], &temperature1)) {
       PRINT_INPUT_ERROR("Initial temperature should be a number.");
@@ -391,7 +465,7 @@ void Integrate::parse_ensemble(
   }
 
   // 3. Pressures and pressure_coupling (NPT)
-  if (type >= 11 && type <= 20) {
+  if (type >= 11 && type < 20) {
     // pressures:
     if (num_param == 12) {
       for (int i = 0; i < 3; i++) {
@@ -764,12 +838,29 @@ void Integrate::parse_ensemble(
         printf("    modulus_xy is %g GPa.\n", elastic_modulus[5]);
       }
       printf("    tau_p is %g time_step.\n", tau_p);
-
       // Change the units of pressure form GPa to that used in the code
       for (int i = 0; i < 6; i++) {
         target_pressure[i] /= PRESSURE_UNIT_CONVERSION;
         pressure_coupling[i] *= PRESSURE_UNIT_CONVERSION;
       }
+      break;
+    case -1:
+      break;
+    case -2:
+      break;
+    case -3:
+      break;
+    case -4:
+      break;
+    case -5:
+      break;
+    case -6:
+      break;
+    case -7:
+      break;
+    case -8:
+      break;
+    case -9:
       break;
     case 21:
       printf("Integrate with heating and cooling for this run.\n");
@@ -813,7 +904,11 @@ void Integrate::parse_ensemble(
       printf("    number of beads is %d.\n", number_of_beads);
       break;
     case 33:
-      printf("Use NVT-PIMD for this run.\n");
+      if (num_param >= 9) {
+        printf("Use NPT-PIMD for this run.\n");
+      } else {
+        printf("Use NVT-PIMD for this run.\n");
+      }
       printf("    number of beads is %d.\n", number_of_beads);
       printf("    initial temperature is %g K.\n", temperature1);
       printf("    final temperature is %g K.\n", temperature2);
